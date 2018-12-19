@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'dart:async';
 
 void main() => runApp(MaterialApp(home: WikipediaExplorer()));
@@ -10,67 +11,110 @@ class WikipediaExplorer extends StatefulWidget {
 }
 
 class _WikipediaExplorerState extends State<WikipediaExplorer> {
-  Completer<WebViewController> _controllerAccess = Completer<WebViewController>();
-  final Set<String> favorites = Set<String>();
+  Completer<WebViewController> _controllerAccess =
+      Completer<WebViewController>();
+  final Set<String> _favorites = Set<String>();
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-        appBar: AppBar(
-          title: const Text('Wikipedia Explorer'),
-          // This drop down menu demonstrates that Flutter widgets can be shown over the web view.
-          actions: <Widget>[
-            NavigationControls(_controllerAccess.future),
-            const SampleMenu(),
-          ],
-        ),
-        body: WebView(
-          initialUrl: 'https://en.wikipedia.org/wiki/Kraken',
-          //javaScriptMode: JavaScriptMode.unrestricted,
-          onWebViewCreated: (WebViewController webViewController) {
-            _controllerAccess.complete(webViewController);
-          },
-        ),
-        floatingActionButton: FloatingActionButton(
-          onPressed: _saveBookmark,
-          child: WebView(
-             onWebViewCreated: (WebViewController webViewController) async {
-           print('EEEEEE ${ await webViewController.currentUrl()}');
-          },
-
-          ), //Icon(Icons.favorite),
-        ));
+      appBar: AppBar(
+        title: const Text('Wikipedia Explorer'),
+        // This drop down menu demonstrates that Flutter widgets can be shown over the web view.
+        actions: <Widget>[
+          NavigationControls(_controllerAccess.future),
+          Menu(_controllerAccess.future, () => _favorites),
+        ],
+      ),
+      body: WebView(
+        initialUrl: 'https://en.wikipedia.org/wiki/Kraken',
+        onWebViewCreated: (WebViewController webViewController) {
+          _controllerAccess.complete(webViewController);
+        },
+      ),
+      floatingActionButton: _bookmarkButton(),
+    );
   }
 
-  _saveBookmark() async {
-    if (_controllerAccess.isCompleted) {
-      var controller = await _controllerAccess.future;
-      print(await controller.currentUrl());
-    }
-
+  _bookmarkButton() {
+    return FutureBuilder<WebViewController>(
+      future: _controllerAccess.future,
+      builder:
+          (BuildContext context, AsyncSnapshot<WebViewController> controller) {
+        if (controller.hasData) {
+          return FloatingActionButton(
+            onPressed: () async {
+              var url = await controller.data.currentUrl();
+              _favorites.add(url);
+              Scaffold.of(context).showSnackBar(
+                SnackBar(content: Text('Saved $url for later reading.')),
+              );
+            },
+            child: Icon(Icons.favorite),
+          );
+        }
+        return Container();
+      },
+    );
   }
 }
 
-class SampleMenu extends StatelessWidget {
-  const SampleMenu();
+class Menu extends StatelessWidget {
+  Menu(this._webViewControllerFuture, this.favoritesAccessor);
+  final Future<WebViewController> _webViewControllerFuture;
+  // TODO(efortuna): Come up with a more elegant solution for an accessor to this than a callback.
+  final Function favoritesAccessor;
 
   @override
   Widget build(BuildContext context) {
-    return PopupMenuButton<String>(
-      onSelected: (String value) {
-        Scaffold.of(context)
-            .showSnackBar(SnackBar(content: Text('You selected: $value')));
+    return FutureBuilder(
+      future: _webViewControllerFuture,
+      builder:
+          (BuildContext context, AsyncSnapshot<WebViewController> controller) {
+        if (!controller.hasData) return Container();
+        return PopupMenuButton<String>(
+          onSelected: (String value) async {
+            if (value == 'Email link') {
+              var url = await controller.data.currentUrl();
+              await launch(
+                  'mailto:?subject=Check out this cool Wikipedia page&body=$url');
+            } else {
+              var newUrl = await Navigator.push(context,
+                  MaterialPageRoute(builder: (BuildContext context) {
+                return FavoritesPage(favoritesAccessor());
+              }));
+              if (newUrl != null) controller.data.loadUrl(newUrl);
+            }
+          },
+          itemBuilder: (BuildContext context) => <PopupMenuItem<String>>[
+                const PopupMenuItem<String>(
+                  value: 'Email link',
+                  child: Text('Email link'),
+                ),
+                const PopupMenuItem<String>(
+                  value: 'See Favorites',
+                  child: Text('See Favorites'),
+                ),
+              ],
+        );
       },
-      itemBuilder: (BuildContext context) => <PopupMenuItem<String>>[
-            const PopupMenuItem<String>(
-              value: 'Item 1',
-              child: Text('Item 1'),
-            ),
-            const PopupMenuItem<String>(
-              value: 'Item 2',
-              child: Text('Item 2'),
-            ),
-          ],
+    );
+  }
+}
+
+class FavoritesPage extends StatelessWidget {
+  FavoritesPage(this.favorites);
+  final Set<String> favorites;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('Favorite pages')),
+      body: ListView(
+          children: favorites
+              .map((url) => ListTile(
+                  title: Text(url), onTap: () => Navigator.pop(context, url)))
+              .toList()),
     );
   }
 }
@@ -124,4 +168,3 @@ class NavigationControls extends StatelessWidget {
     }
   }
 }
-
